@@ -90,7 +90,7 @@ const PpmImage = struct {
 };
 
 const Hittable = union(enum) {
-    sphere: *Sphere,
+    sphere: Sphere,
 
     const Hit = struct {
         point: Position,
@@ -114,10 +114,14 @@ const Ray = struct {
         return self.origin + scale(self.direction, t);
     }
 
-    pub fn color(self: Ray) Color {
-        const s = Sphere{ .origin = Position{ 0.0, 0.0, -1.0 }, .radius = 0.5 };
-        if (s.ray_hit(self, 0.0, std.math.inf(f32))) |h| {
-            return scale(h.normal + @as(Color, @splat(1.0)), 0.5);
+    pub fn color(
+        self: Ray,
+        hittables: []Hittable,
+    ) Color {
+        for (hittables) |hittable| {
+            if (hittable.ray_hit(self, 0.0, std.math.inf(f32))) |h| {
+                return scale(h.normal + @as(Color, @splat(1.0)), 0.5);
+            }
         }
 
         const unitDirection = normalize(self.direction);
@@ -245,6 +249,10 @@ pub fn main() !void {
 
     var ppm_image = PpmImage.init(arena.allocator(), @intFromFloat(width), @intFromFloat(height));
 
+    var hittables = std.ArrayList(Hittable).init(arena.allocator());
+    try hittables.append(Hittable{ .sphere = Sphere{ .origin = Position{ 0.0, 0.0, -1.0 }, .radius = 0.5 } });
+    try hittables.append(Hittable{ .sphere = Sphere{ .origin = Position{ 0.0, -100.5, -1.0 }, .radius = 100.0 } });
+
     for (0..@intFromFloat(height)) |h| {
         for (0..@intFromFloat(width)) |w| {
             const wf = @as(f32, @floatFromInt(w));
@@ -253,7 +261,7 @@ pub fn main() !void {
             const pixelCenter = firstPixelPosition + scale(pixelDeltaRight, wf) + scale(pixelDeltaDown, hf);
             const ray = Ray{ .direction = pixelCenter - cameraCenter, .origin = cameraCenter };
 
-            try ppm_image.pushPixel(PpmImage.RGBColor.fromVector(ray.color()));
+            try ppm_image.pushPixel(PpmImage.RGBColor.fromVector(ray.color(hittables.items)));
         }
     }
 
