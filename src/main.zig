@@ -115,7 +115,7 @@ const Ray = struct {
 
     pub fn color(self: Ray) Color {
         const s = Sphere{ .origin = Position{ 0.0, 0.0, -1.0 }, .radius = 0.5 };
-        if (s.ray_hit(self, 0.0, 0.0)) |h| {
+        if (s.ray_hit(self, 0.0, std.math.inf(f32))) |h| {
             return scale(h.normal + @as(Color, @splat(1.0)), 0.5);
         }
 
@@ -148,8 +148,6 @@ const Sphere = struct {
     // it intersects the sphere at the 2 roots. Thus finding the discriminant
     // is enough to answer if a ray hits the sphere.
     pub fn ray_hit(self: Sphere, ray: Ray, tmin: f32, tmax: f32) ?Hittable.Hit {
-        _ = tmin;
-        _ = tmax;
         // This actually does some further simplification to reduce the number of calculations.
         // - The dot product of a vector with itself is the squared magnitude.
         // - Setting b = -2h simplifies some disciminant calculations
@@ -169,10 +167,19 @@ const Sphere = struct {
             return null;
         }
 
-        const t = (h - @sqrt(discriminant)) / a;
-        const normal = normalize(ray.at(t) - self.origin);
+        const dsqrt = @sqrt(discriminant);
+        var t = (h - dsqrt) / a;
+        if (t <= tmin or t >= tmax) {
+            // Maybe the other root is in bounds?
+            t = (h + dsqrt) / a;
+            if (t <= tmin or t >= tmax) {
+                return null;
+            }
+        }
+        const intersectionPoint = ray.at(t);
+        const normal = normalize(intersectionPoint - self.origin);
 
-        return Hittable.Hit{ .point = Position{ 0.0, 0.0, 0.0 }, .normal = normal, .t = t };
+        return Hittable.Hit{ .point = intersectionPoint, .normal = normal, .t = t };
     }
 };
 
