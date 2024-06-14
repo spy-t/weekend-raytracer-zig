@@ -96,6 +96,7 @@ const Hittable = union(enum) {
         point: Position,
         normal: Direction,
         t: f32,
+        frontFace: bool,
     };
 
     pub fn ray_hit(self: Hittable, ray: Ray, tmin: f32, tmax: f32) ?Hit {
@@ -126,6 +127,22 @@ const Ray = struct {
         // - /2 it so the range becomes [0, 1]
         const a = 0.5 * (unitDirection[Y] + 1.0);
         return lerp(Color{ 1.0, 1.0, 1.0 }, Color{ 0.5, 0.7, 1.0 }, a);
+    }
+
+    /// Called when we have determined that the ray has hit something. This
+    /// takes care of calculating the correct normal values.
+    pub fn hit(self: Ray, t: f32, targetOrigin: Position) Hittable.Hit {
+        const intersectionPoint = self.at(t);
+
+        // This calculation always produces an outwards normal
+        const normal = normalize(intersectionPoint - targetOrigin);
+        if (dot(self.direction, normal) > 0.0) {
+            // The ray comes from inside the target so flip the normal and mark this as a back face
+            return Hittable.Hit{ .normal = -normal, .point = intersectionPoint, .t = t, .frontFace = false };
+        } else {
+            // The ray comes from outside the target so keep the normal and mark this as a front face
+            return Hittable.Hit{ .normal = normal, .point = intersectionPoint, .t = t, .frontFace = true };
+        }
     }
 };
 
@@ -176,10 +193,8 @@ const Sphere = struct {
                 return null;
             }
         }
-        const intersectionPoint = ray.at(t);
-        const normal = normalize(intersectionPoint - self.origin);
 
-        return Hittable.Hit{ .point = intersectionPoint, .normal = normal, .t = t };
+        return ray.hit(t, self.origin);
     }
 };
 
