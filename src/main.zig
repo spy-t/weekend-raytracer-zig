@@ -3,98 +3,15 @@
 // - Zig integer division produces an integer result so take extra care to use float literals when computing a literal division
 
 const std = @import("std");
-const Allocator = std.mem.Allocator;
-const heap = std.heap;
-
-const X = 0;
-const Y = 1;
-const Z = 2;
-const Color = @Vector(3, f32);
-const Position = Color;
-const Direction = Position;
-
-fn dot(a: @Vector(3, f32), b: @Vector(3, f32)) f32 {
-    return @reduce(.Add, a * b);
-}
-
-fn cross(a: @Vector(3, f32), b: @Vector(3, f32)) @Vector(3, f32) {
-    return @Vector(3, f32){
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    };
-}
-
-fn magnitude(a: @Vector(3, f32)) f32 {
-    return std.math.sqrt(@reduce(.Add, a * a));
-}
-
-fn normalize(a: @Vector(3, f32)) @Vector(3, f32) {
-    return scale(a, 1 / magnitude(a));
-}
-
-fn scale(a: @Vector(3, f32), factor: f32) @Vector(3, f32) {
-    return a * @as(@Vector(3, f32), @splat(factor));
-}
-
-fn equal(a: @Vector(3, f32), b: @Vector(3, f32)) bool {
-    return @reduce(.And, a == b);
-}
-
-fn lerp(start: @Vector(3, f32), end: @Vector(3, f32), a: f32) @Vector(3, f32) {
-    std.debug.assert(a >= 0 and a <= 1);
-    return scale(start, 1.0 - a) + scale(end, a);
-}
-
-const PpmImage = struct {
-    buffer: std.ArrayList(u8),
-    width: u32,
-    height: u32,
-    current_row: u32 = 0,
-    current_column: u32 = 0,
-
-    const RGBColor = struct {
-        r: u8,
-        g: u8,
-        b: u8,
-        pub fn fromVector(v: Color) @This() {
-            return .{ .r = @intFromFloat(255.999 * v[0]), .g = @intFromFloat(255.999 * v[1]), .b = @intFromFloat(255.999 * v[2]) };
-        }
-    };
-
-    fn init(allocator: Allocator, width: u32, height: u32) PpmImage {
-        return PpmImage{ .buffer = std.ArrayList(u8).init(allocator), .width = width, .height = height };
-    }
-
-    fn pushPixel(self: *PpmImage, color: RGBColor) !void {
-        const w = self.buffer.writer();
-        if (self.current_column == self.width) {
-            if (self.current_row == self.height) {
-                return error.ImageFull;
-            }
-            self.current_column = 0;
-            self.current_row += 1;
-            try w.writeByte('\n');
-        }
-        try std.fmt.format(self.buffer.writer(), " {} {} {}", .{ color.r, color.g, color.b });
-        self.current_column += 1;
-    }
-
-    fn writeTo(self: *PpmImage, writer: anytype) !void {
-        // First write the header
-        try std.fmt.format(writer, "P3\n{} {}\n255\n", .{ self.width, self.height });
-
-        // Then write the pixel values
-        try writer.writeAll(self.buffer.items);
-    }
-};
+pub const vec = @import("vector.zig");
+const PpmImage = @import("ppm.zig").PpmImage;
 
 const Hittable = union(enum) {
     sphere: Sphere,
 
     const Hit = struct {
-        point: Position,
-        normal: Direction,
+        point: vec.Position,
+        normal: vec.Direction,
         t: f32,
         frontFace: bool,
     };
@@ -107,30 +24,30 @@ const Hittable = union(enum) {
 };
 
 const Ray = struct {
-    origin: Position,
-    direction: Direction,
+    origin: vec.Position,
+    direction: vec.Direction,
 
-    pub fn at(self: Ray, t: f32) Position {
-        return self.origin + scale(self.direction, t);
+    pub fn at(self: Ray, t: f32) vec.Position {
+        return self.origin + vec.scale(self.direction, t);
     }
 
     pub fn color(
         self: Ray,
         hittables: []Hittable,
-    ) Color {
+    ) vec.Color {
         for (hittables) |hittable| {
             if (hittable.ray_hit(self, 0.0, std.math.inf(f32))) |h| {
-                return scale(h.normal + @as(Color, @splat(1.0)), 0.5);
+                return vec.scale(h.normal + @as(vec.Color, @splat(1.0)), 0.5);
             }
         }
 
-        const unitDirection = normalize(self.direction);
+        const unitDirection = vec.normalize(self.direction);
         // the unit vector produced here will have components in range [-1, 1].
         // We want components to be in [0, 1] so we:
         // - +1 it so the range becomes [0, 2]
         // - /2 it so the range becomes [0, 1]
-        const a = 0.5 * (unitDirection[Y] + 1.0);
-        return lerp(Color{ 1.0, 1.0, 1.0 }, Color{ 0.5, 0.7, 1.0 }, a);
+        const a = 0.5 * (unitDirection[vec.Y] + 1.0);
+        return vec.lerp(vec.Color{ 1.0, 1.0, 1.0 }, vec.Color{ 0.5, 0.7, 1.0 }, a);
     }
 
     // Here we make an important choice. We calculate the orientation of a face
@@ -139,19 +56,19 @@ const Ray = struct {
     //
     /// Called when we have determined that the ray has hit something. This
     /// takes care of calculating face orientation.
-    pub fn hit(self: Ray, t: f32, targetOrigin: Position) Hittable.Hit {
+    pub fn hit(self: Ray, t: f32, targetOrigin: vec.Position) Hittable.Hit {
         const intersectionPoint = self.at(t);
 
         // This calculation always produces an outwards normal
-        const normal = normalize(intersectionPoint - targetOrigin);
+        const normal = vec.normalize(intersectionPoint - targetOrigin);
         return hit_with_normal(self, t, intersectionPoint, normal);
     }
 
     /// Produces a hit and calculates the face orientation. The normal parameter MUST be normalized.
-    pub fn hit_with_normal(self: Ray, t: f32, intersectionPoint: Position, normal: Direction) Hittable.Hit {
-        std.debug.assert(@abs(magnitude(normal) - 1.0) <= 0.1);
+    pub fn hit_with_normal(self: Ray, t: f32, intersectionPoint: vec.Position, normal: vec.Direction) Hittable.Hit {
+        std.debug.assert(@abs(vec.magnitude(normal) - 1.0) <= 0.1);
 
-        if (dot(self.direction, normal) > 0.0) {
+        if (vec.dot(self.direction, normal) > 0.0) {
             // The ray comes from inside the target so flip the normal and mark this as a back face
             return Hittable.Hit{ .normal = -normal, .point = intersectionPoint, .t = t, .frontFace = false };
         } else {
@@ -162,7 +79,7 @@ const Ray = struct {
 };
 
 const Sphere = struct {
-    origin: Position,
+    origin: vec.Position,
     radius: f32,
 
     // A sphere equation is x^2 + y^2 + z^2 = r^2.
@@ -186,12 +103,12 @@ const Sphere = struct {
 
         // oc = (C - Q)
         const oc = self.origin - ray.origin;
-        const ocMag = magnitude(oc);
+        const ocMag = vec.magnitude(oc);
 
-        const rayDirectionMag = magnitude(ray.direction);
+        const rayDirectionMag = vec.magnitude(ray.direction);
         const a = rayDirectionMag * rayDirectionMag;
 
-        const h = dot(ray.direction, oc);
+        const h = vec.dot(ray.direction, oc);
         const c = ocMag * ocMag - self.radius * self.radius;
 
         const discriminant = h * h - a * c;
@@ -210,13 +127,13 @@ const Sphere = struct {
         }
 
         const p = ray.at(t);
-        const outwardNormal = scale(p - self.origin, 1.0 / self.radius);
+        const outwardNormal = vec.scale(p - self.origin, 1.0 / self.radius);
         return ray.hit_with_normal(t, p, outwardNormal);
     }
 };
 
 pub fn main() !void {
-    var arena = heap.ArenaAllocator.init(heap.page_allocator);
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
     // Image
@@ -235,30 +152,30 @@ pub fn main() !void {
     const focalLength = 1.0;
     const viewportHeight = 2.0;
     const viewportWidth = viewportHeight * (width / height);
-    const cameraCenter: Position = @splat(0.0);
+    const cameraCenter: vec.Position = @splat(0.0);
 
     // Viewport
-    const viewportRight = Direction{ viewportWidth, 0.0, 0.0 };
-    const viewportDown = Direction{ 0.0, -viewportHeight, 0.0 };
+    const viewportRight = vec.Direction{ viewportWidth, 0.0, 0.0 };
+    const viewportDown = vec.Direction{ 0.0, -viewportHeight, 0.0 };
 
-    const pixelDeltaRight = scale(viewportRight, 1.0 / width);
-    const pixelDeltaDown = scale(viewportDown, 1.0 / height);
+    const pixelDeltaRight = vec.scale(viewportRight, 1.0 / width);
+    const pixelDeltaDown = vec.scale(viewportDown, 1.0 / height);
 
-    const viewportUpperLeft = cameraCenter - Direction{ 0.0, 0.0, focalLength } - scale(viewportRight, 1.0 / 2.0) - scale(viewportDown, 1.0 / 2.0);
-    const firstPixelPosition = viewportUpperLeft + scale(pixelDeltaRight + pixelDeltaDown, 0.5);
+    const viewportUpperLeft = cameraCenter - vec.Direction{ 0.0, 0.0, focalLength } - vec.scale(viewportRight, 1.0 / 2.0) - vec.scale(viewportDown, 1.0 / 2.0);
+    const firstPixelPosition = viewportUpperLeft + vec.scale(pixelDeltaRight + pixelDeltaDown, 0.5);
 
     var ppm_image = PpmImage.init(arena.allocator(), @intFromFloat(width), @intFromFloat(height));
 
     var hittables = std.ArrayList(Hittable).init(arena.allocator());
-    try hittables.append(Hittable{ .sphere = Sphere{ .origin = Position{ 0.0, 0.0, -1.0 }, .radius = 0.5 } });
-    try hittables.append(Hittable{ .sphere = Sphere{ .origin = Position{ 0.0, -100.5, -1.0 }, .radius = 100.0 } });
+    try hittables.append(Hittable{ .sphere = Sphere{ .origin = vec.Position{ 0.0, 0.0, -1.0 }, .radius = 0.5 } });
+    try hittables.append(Hittable{ .sphere = Sphere{ .origin = vec.Position{ 0.0, -100.5, -1.0 }, .radius = 100.0 } });
 
     for (0..@intFromFloat(height)) |h| {
         for (0..@intFromFloat(width)) |w| {
             const wf = @as(f32, @floatFromInt(w));
             const hf = @as(f32, @floatFromInt(h));
 
-            const pixelCenter = firstPixelPosition + scale(pixelDeltaRight, wf) + scale(pixelDeltaDown, hf);
+            const pixelCenter = firstPixelPosition + vec.scale(pixelDeltaRight, wf) + vec.scale(pixelDeltaDown, hf);
             const ray = Ray{ .direction = pixelCenter - cameraCenter, .origin = cameraCenter };
 
             try ppm_image.pushPixel(PpmImage.RGBColor.fromVector(ray.color(hittables.items)));
@@ -270,43 +187,6 @@ pub fn main() !void {
     try ppm_image.writeTo(image_file.writer());
 }
 
-test "vector scale works" {
-    const v = Position{ -2.0, 4.0, -4.0 };
-    const res = scale(v, 2.0);
-    try std.testing.expect(equal(res, Position{ -4.0, 8.0, -8.0 }));
-}
-
-test "vector magnitude works" {
-    const v = Position{ -2.0, 4.0, -4.0 };
-    const mag = magnitude(v);
-    try std.testing.expect(mag == 6);
-}
-
-test "vector dot product works" {
-    const a = Position{ 1.0, 3.0, -5.0 };
-    const b = Position{ 4.0, -2.0, -1.0 };
-    const c = dot(a, b);
-    try std.testing.expect(c == 3.0);
-}
-
-test "vector cross product works" {
-    const a = Position{ 1.0, 3.0, -5.0 };
-    const b = Position{ 4.0, -2.0, -1.0 };
-    const c = cross(a, b);
-    try std.testing.expect(equal(c, Position{ -13.0, -19.0, -14.0 }));
-}
-
-test "vector normalization works" {
-    const a = Position{ -2.0, 4.0, -4.0 };
-    const aNorm = normalize(a);
-
-    try std.testing.expect(equal(aNorm, Position{ -1.0 / 3.0, 2.0 / 3.0, -2.0 / 3.0 }));
-}
-
-test "vector normalization on a normalized vector is identity" {
-    const a = Position{ -2.0, 4.0, -4.0 };
-    const aNorm = normalize(a);
-    const normedAgain = normalize(aNorm);
-
-    try std.testing.expect(equal(aNorm, normedAgain));
+test {
+    std.testing.refAllDecls(@This());
 }
