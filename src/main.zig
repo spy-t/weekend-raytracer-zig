@@ -94,14 +94,15 @@ const Ray = struct {
     direction: Direction,
 
     pub fn at(self: Ray, t: f32) Position {
-        return self.origin + t * self.direction;
+        return self.origin + scale(self.direction, t);
     }
 
     pub fn color(self: Ray) Color {
         const s = Sphere{ .origin = Position{ 0.0, 0.0, -1.0 }, .radius = 0.5 };
-        if (s.ray_hit(self)) {
-            return Color{ 1.0, 0.0, 0.0 };
+        if (s.ray_hit_point_normal(self)) |normal| {
+            return scale(normal + @as(Color, @splat(1.0)), 0.5);
         }
+
         const unitDirection = normalize(self.direction);
         // the unit vector produced here will have components in range [-1, 1].
         // We want components to be in [0, 1] so we:
@@ -130,14 +131,47 @@ const Sphere = struct {
     // root it is perpendicular to the sphere at the root and if it has 2 roots
     // it intersects the sphere at the 2 roots. Thus finding the discriminant
     // is enough to answer if a ray hits the sphere.
-    pub fn ray_hit(self: Sphere, r: Ray) bool {
+    inline fn ray_intersection_equation(self: Sphere, r: Ray) struct { a: f32, h: f32, c: f32, discriminant: f32 } {
+
+        // This actually does some further simplification to reduce the number of calculations.
+        // - The dot product of a vector with itself is the squared magnitude.
+        // - Setting b = -2h simplifies some disciminant calculations
+
         // oc = (C - Q)
         const oc = self.origin - r.origin;
-        const a = dot(r.direction, r.direction);
-        const b = -2.0 * dot(r.direction, oc);
-        const c = dot(oc, oc) - self.radius * self.radius;
-        const discriminant = b * b - 4 * a * c;
-        return discriminant >= 0;
+        const ocMag = magnitude(oc);
+
+        const rayDirectionMag = magnitude(r.direction);
+        const a = rayDirectionMag * rayDirectionMag;
+
+        const h = dot(r.direction, oc);
+        const c = ocMag * ocMag - self.radius * self.radius;
+
+        const discriminant = h * h - a * c;
+
+        return .{ .a = a, .h = h, .c = c, .discriminant = discriminant };
+    }
+
+    /// Calculates the t at which P(t) intersects the sphere
+    pub fn ray_hit_point(self: Sphere, r: Ray) ?f32 {
+        const eq = self.ray_intersection_equation(r);
+        if (eq.discriminant < 0) {
+            return null;
+        } else {
+            // Simply calculate the the root (one of them). This is the value of t
+            // TODO(spyros): What about the other root?
+            return (eq.h - @sqrt(eq.discriminant)) / eq.a;
+        }
+    }
+
+    /// Calculates the normal at the intersection with the ray if the ray hits
+    /// the sphere
+    pub fn ray_hit_point_normal(self: Sphere, r: Ray) ?Direction {
+        if (self.ray_hit_point(r)) |t| {
+            return normalize(r.at(t) - self.origin);
+        } else {
+            return null;
+        }
     }
 };
 
