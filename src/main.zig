@@ -129,8 +129,16 @@ const Ray = struct {
         return lerp(Color{ 1.0, 1.0, 1.0 }, Color{ 0.5, 0.7, 1.0 }, a);
     }
 
+    // TODO(spyros): This might need rework because it always normalizes the
+    // normal and it might be redundant for some shapes. Otherwise we could
+    // expose a "I know what I do version" that such shapes could use.
+    //
+    // Here we make an important choice. We calculate the orientation of a face
+    // at geometric computation time. This is done because we will have more
+    // material types than geometry types.
+    //
     /// Called when we have determined that the ray has hit something. This
-    /// takes care of calculating the correct normal values.
+    /// takes care of calculating face orientation.
     pub fn hit(self: Ray, t: f32, targetOrigin: Position) Hittable.Hit {
         const intersectionPoint = self.at(t);
 
