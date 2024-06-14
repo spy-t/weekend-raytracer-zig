@@ -16,9 +16,9 @@ const Hittable = union(enum) {
         frontFace: bool,
     };
 
-    pub fn ray_hit(self: Hittable, ray: Ray, tmin: f32, tmax: f32) ?Hit {
+    pub fn ray_hit(self: Hittable, ray: Ray, interval: Interval) ?Hit {
         switch (self) {
-            inline else => |s| return s.ray_hit(ray, tmin, tmax),
+            inline else => |s| return s.ray_hit(ray, interval),
         }
     }
 };
@@ -35,10 +35,17 @@ const Ray = struct {
         self: Ray,
         hittables: []Hittable,
     ) vec.Color {
+        var closestSoFar = std.math.inf(f32);
+        var maybeHit: ?Hittable.Hit = null;
         for (hittables) |hittable| {
-            if (hittable.ray_hit(self, 0.0, std.math.inf(f32))) |h| {
-                return vec.scale(h.normal + @as(vec.Color, @splat(1.0)), 0.5);
+            if (hittable.ray_hit(self, Interval.of(0.0, closestSoFar))) |h| {
+                maybeHit = h;
+                closestSoFar = h.t;
             }
+        }
+
+        if (maybeHit) |h| {
+            return vec.scale(h.normal + @as(vec.Color, @splat(1.0)), 0.5);
         }
 
         const unitDirection = vec.normalize(self.direction);
@@ -96,7 +103,7 @@ const Sphere = struct {
     // root it is perpendicular to the sphere at the root and if it has 2 roots
     // it intersects the sphere at the 2 roots. Thus finding the discriminant
     // is enough to answer if a ray hits the sphere.
-    pub fn ray_hit(self: Sphere, ray: Ray, tmin: f32, tmax: f32) ?Hittable.Hit {
+    pub fn ray_hit(self: Sphere, ray: Ray, interval: Interval) ?Hittable.Hit {
         // This actually does some further simplification to reduce the number of calculations.
         // - The dot product of a vector with itself is the squared magnitude.
         // - Setting b = -2h simplifies some disciminant calculations
@@ -118,10 +125,10 @@ const Sphere = struct {
 
         const dsqrt = @sqrt(discriminant);
         var t = (h - dsqrt) / a;
-        if (t <= tmin or t >= tmax) {
+        if (!interval.surrounds(t)) {
             // Maybe the other root is in bounds?
             t = (h + dsqrt) / a;
-            if (t <= tmin or t >= tmax) {
+            if (!interval.surrounds(t)) {
                 return null;
             }
         }
@@ -129,6 +136,37 @@ const Sphere = struct {
         const p = ray.at(t);
         const outwardNormal = vec.scale(p - self.origin, 1.0 / self.radius);
         return ray.hit_with_normal(t, p, outwardNormal);
+    }
+};
+
+const Interval = struct {
+    min: f32,
+    max: f32,
+
+    pub const EMPTY = Interval{
+        .min = std.math.inf(f32),
+        .max = -std.math.inf(f32),
+    };
+
+    pub const UNIVERSE = Interval{
+        .min = -std.math.inf(f32),
+        .max = std.math.inf(f32),
+    };
+
+    pub fn of(min: f32, max: f32) Interval {
+        return .{ .min = min, .max = max };
+    }
+
+    pub fn size(self: Interval) f32 {
+        self.max - self.min;
+    }
+
+    pub fn contains(self: Interval, x: f32) bool {
+        return self.min <= x and x <= self.max;
+    }
+
+    pub fn surrounds(self: Interval, x: f32) bool {
+        return self.min < x and x < self.max;
     }
 };
 
@@ -167,8 +205,8 @@ pub fn main() !void {
     var ppm_image = PpmImage.init(arena.allocator(), @intFromFloat(width), @intFromFloat(height));
 
     var hittables = std.ArrayList(Hittable).init(arena.allocator());
-    try hittables.append(Hittable{ .sphere = Sphere{ .origin = vec.Position{ 0.0, 0.0, -1.0 }, .radius = 0.5 } });
     try hittables.append(Hittable{ .sphere = Sphere{ .origin = vec.Position{ 0.0, -100.5, -1.0 }, .radius = 100.0 } });
+    try hittables.append(Hittable{ .sphere = Sphere{ .origin = vec.Position{ 0.0, 0.0, -1.0 }, .radius = 0.5 } });
 
     for (0..@intFromFloat(height)) |h| {
         for (0..@intFromFloat(width)) |w| {
