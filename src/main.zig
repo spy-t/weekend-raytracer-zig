@@ -129,10 +129,6 @@ const Ray = struct {
         return lerp(Color{ 1.0, 1.0, 1.0 }, Color{ 0.5, 0.7, 1.0 }, a);
     }
 
-    // TODO(spyros): This might need rework because it always normalizes the
-    // normal and it might be redundant for some shapes. Otherwise we could
-    // expose a "I know what I do version" that such shapes could use.
-    //
     // Here we make an important choice. We calculate the orientation of a face
     // at geometric computation time. This is done because we will have more
     // material types than geometry types.
@@ -144,6 +140,13 @@ const Ray = struct {
 
         // This calculation always produces an outwards normal
         const normal = normalize(intersectionPoint - targetOrigin);
+        return hit_with_normal(self, t, intersectionPoint, normal);
+    }
+
+    /// Produces a hit and calculates the face orientation. The normal parameter MUST be normalized.
+    pub fn hit_with_normal(self: Ray, t: f32, intersectionPoint: Position, normal: Direction) Hittable.Hit {
+        std.debug.assert(@abs(magnitude(normal) - 1.0) <= 0.1);
+
         if (dot(self.direction, normal) > 0.0) {
             // The ray comes from inside the target so flip the normal and mark this as a back face
             return Hittable.Hit{ .normal = -normal, .point = intersectionPoint, .t = t, .frontFace = false };
@@ -202,7 +205,9 @@ const Sphere = struct {
             }
         }
 
-        return ray.hit(t, self.origin);
+        const p = ray.at(t);
+        const outwardNormal = scale(p - self.origin, 1.0 / self.radius);
+        return ray.hit_with_normal(t, p, outwardNormal);
     }
 };
 
