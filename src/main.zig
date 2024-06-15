@@ -170,59 +170,125 @@ const Interval = struct {
     }
 };
 
+const Camera = struct {
+    origin: vec.Position,
+    focalLength: f32,
+
+    aspectRatio: f32,
+    imageWidthPixels: u32,
+    imageHeightPixels: u32,
+
+    viewportHeight: f32,
+    viewportWidth: f32,
+
+    viewportRight: vec.Direction,
+    viewportDown: vec.Direction,
+    viewportUpperLeft: vec.Position,
+
+    pixelDeltaRight: vec.Direction,
+    pixelDeltaDown: vec.Direction,
+    firstPixelPosition: vec.Position,
+
+    const Options = struct {
+        aspectRatio: f32 = 16.0 / 9.0,
+        focalLength: f32 = 1.0,
+        viewportHeight: f32 = 2.0,
+        imageWidthPixels: u32,
+    };
+
+    pub fn init(options: Options) Camera {
+        const origin: vec.Position = @splat(0.0);
+
+        const aspectRatio = options.aspectRatio;
+        const focalLength = options.focalLength;
+        const viewportHeight = options.viewportHeight;
+        const imageWidthPixels = options.imageWidthPixels;
+
+        const wf = @as(f32, @floatFromInt(options.imageWidthPixels));
+
+        const hf = height: {
+            const h = wf / options.aspectRatio;
+            if (h < 1) {
+                break :height 1;
+            } else {
+                break :height h;
+            }
+        };
+        const imageHeightPixels = @as(u32, @intFromFloat(hf));
+
+        const viewportWidth = viewportHeight * (wf / hf);
+
+        const viewportRight = vec.Direction{ viewportWidth, 0.0, 0.0 };
+        const viewportDown = vec.Direction{ 0.0, -viewportHeight, 0.0 };
+
+        const pixelDeltaRight = vec.scale(viewportRight, 1.0 / wf);
+        const pixelDeltaDown = vec.scale(viewportDown, 1.0 / hf);
+
+        const viewportUpperLeft = origin - vec.Direction{ 0.0, 0.0, focalLength } - vec.scale(viewportRight, 1.0 / 2.0) - vec.scale(viewportDown, 1.0 / 2.0);
+        const firstPixelPosition = viewportUpperLeft + vec.scale(pixelDeltaRight + pixelDeltaDown, 0.5);
+
+        return Camera{
+            .origin = origin,
+            .focalLength = focalLength,
+            .aspectRatio = aspectRatio,
+            .imageWidthPixels = imageWidthPixels,
+            .imageHeightPixels = imageHeightPixels,
+            .viewportHeight = viewportHeight,
+            .viewportWidth = viewportWidth,
+            .viewportRight = viewportRight,
+            .viewportDown = viewportDown,
+            .pixelDeltaRight = pixelDeltaRight,
+            .pixelDeltaDown = pixelDeltaDown,
+            .viewportUpperLeft = viewportUpperLeft,
+            .firstPixelPosition = firstPixelPosition,
+        };
+    }
+
+    pub fn render(self: Camera, hittables: []Hittable, framebuffer: *std.ArrayList(vec.Color)) !void {
+        for (0..self.imageHeightPixels) |h| {
+            for (0..self.imageWidthPixels) |w| {
+                const wf = @as(f32, @floatFromInt(w));
+                const hf = @as(f32, @floatFromInt(h));
+
+                const pixelCenter = self.firstPixelPosition + vec.scale(self.pixelDeltaRight, wf) + vec.scale(self.pixelDeltaDown, hf);
+                const ray = Ray{ .direction = pixelCenter - self.origin, .origin = self.origin };
+
+                try framebuffer.append(ray.color(hittables));
+            }
+        }
+    }
+};
+
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    // Image
-    const width = 860.0;
-    const aspectRatio = 16.0 / 9.0;
-    const height = height: {
-        const h = width / aspectRatio;
-        if (h < 1) {
-            break :height 1;
-        } else {
-            break :height h;
-        }
-    };
-
-    // Camera
-    const focalLength = 1.0;
-    const viewportHeight = 2.0;
-    const viewportWidth = viewportHeight * (width / height);
-    const cameraCenter: vec.Position = @splat(0.0);
-
-    // Viewport
-    const viewportRight = vec.Direction{ viewportWidth, 0.0, 0.0 };
-    const viewportDown = vec.Direction{ 0.0, -viewportHeight, 0.0 };
-
-    const pixelDeltaRight = vec.scale(viewportRight, 1.0 / width);
-    const pixelDeltaDown = vec.scale(viewportDown, 1.0 / height);
-
-    const viewportUpperLeft = cameraCenter - vec.Direction{ 0.0, 0.0, focalLength } - vec.scale(viewportRight, 1.0 / 2.0) - vec.scale(viewportDown, 1.0 / 2.0);
-    const firstPixelPosition = viewportUpperLeft + vec.scale(pixelDeltaRight + pixelDeltaDown, 0.5);
-
-    var ppm_image = PpmImage.init(arena.allocator(), @intFromFloat(width), @intFromFloat(height));
+    const camera = Camera.init(.{
+        .imageWidthPixels = 860,
+    });
+    var ppm_image = PpmImage.init(camera.imageWidthPixels, camera.imageHeightPixels);
 
     var hittables = std.ArrayList(Hittable).init(arena.allocator());
     try hittables.append(Hittable{ .sphere = Sphere{ .origin = vec.Position{ 0.0, -100.5, -1.0 }, .radius = 100.0 } });
     try hittables.append(Hittable{ .sphere = Sphere{ .origin = vec.Position{ 0.0, 0.0, -1.0 }, .radius = 0.5 } });
 
-    for (0..@intFromFloat(height)) |h| {
-        for (0..@intFromFloat(width)) |w| {
-            const wf = @as(f32, @floatFromInt(w));
-            const hf = @as(f32, @floatFromInt(h));
+    var framebuffer = std.ArrayList(vec.Color).init(arena.allocator());
 
-            const pixelCenter = firstPixelPosition + vec.scale(pixelDeltaRight, wf) + vec.scale(pixelDeltaDown, hf);
-            const ray = Ray{ .direction = pixelCenter - cameraCenter, .origin = cameraCenter };
-
-            try ppm_image.pushPixel(PpmImage.RGBColor.fromVector(ray.color(hittables.items)));
-        }
-    }
+    const renderStartMs = std.time.milliTimestamp();
+    try camera.render(hittables.items, &framebuffer);
+    const renderEndMs = std.time.milliTimestamp();
 
     const cwd = std.fs.cwd();
     var image_file = try cwd.createFile("image.ppm", .{});
-    try ppm_image.writeTo(image_file.writer());
+
+    const writeStartMs = std.time.milliTimestamp();
+    try ppm_image.writeTo(image_file.writer(), framebuffer.items);
+    const writeEndMs = std.time.milliTimestamp();
+
+    std.log.info("rendered in: {}ms", .{renderEndMs - renderStartMs});
+    std.log.info("written in: {}ms", .{writeEndMs - writeStartMs});
+    std.log.info("image dimensions: {}x{}", .{ ppm_image.width, ppm_image.height });
+    std.log.debug("framebuffer size: {}", .{framebuffer.items.len});
 }
 
 test {

@@ -3,11 +3,8 @@ const Allocator = std.mem.Allocator;
 const Color = @import("vector.zig").Color;
 
 pub const PpmImage = struct {
-    buffer: std.ArrayList(u8),
     width: u32,
     height: u32,
-    current_row: u32 = 0,
-    current_column: u32 = 0,
 
     pub const RGBColor = struct {
         r: u8,
@@ -18,8 +15,8 @@ pub const PpmImage = struct {
         }
     };
 
-    pub fn init(allocator: Allocator, width: u32, height: u32) PpmImage {
-        return PpmImage{ .buffer = std.ArrayList(u8).init(allocator), .width = width, .height = height };
+    pub fn init(width: u32, height: u32) PpmImage {
+        return PpmImage{ .width = width, .height = height };
     }
 
     pub fn pushPixel(self: *PpmImage, color: RGBColor) !void {
@@ -36,11 +33,18 @@ pub const PpmImage = struct {
         self.current_column += 1;
     }
 
-    pub fn writeTo(self: *PpmImage, writer: anytype) !void {
-        // First write the header
-        try std.fmt.format(writer, "P3\n{} {}\n255\n", .{ self.width, self.height });
+    pub fn writeTo(self: PpmImage, writer: anytype, data: []Color) !void {
+        var bf = std.io.bufferedWriter(writer);
+        const bfw = bf.writer();
 
-        // Then write the pixel values
-        try writer.writeAll(self.buffer.items);
+        // First write the header
+        try std.fmt.format(bfw, "P3\n{} {}\n255\n", .{ self.width, self.height });
+
+        for (data) |color| {
+            const r: u32 = @intFromFloat(255.999 * color[0]);
+            const g: u32 = @intFromFloat(255.999 * color[1]);
+            const b: u32 = @intFromFloat(255.999 * color[2]);
+            try std.fmt.format(bfw, " {} {} {}", .{ r, g, b });
+        }
     }
 };
