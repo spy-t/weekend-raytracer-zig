@@ -225,6 +225,13 @@ const Camera = struct {
         };
     }
 
+    fn linearToGamma(linear: f32) f32 {
+        if (linear > 0.0) {
+            return @sqrt(linear);
+        }
+        return 0.0;
+    }
+
     pub fn render(self: Camera, hittables: []Hittable, framebuffer: *std.ArrayList(vec.Color)) !void {
         var h: u32 = 0;
         while (h < self.imageHeightPixels) : (h += 1) {
@@ -240,7 +247,10 @@ const Camera = struct {
                     const r = self.getRandomRayAt(w, h);
                     pixelColor += self.rayColor(0, r, hittables);
                 }
-                try framebuffer.append(vec.scale(pixelColor, self.pixelSamplesScale));
+
+                // Do the gamma correction before appending to the framebuffer
+                pixelColor = vec.scale(pixelColor, self.pixelSamplesScale);
+                try framebuffer.append(vec.Color{ linearToGamma(pixelColor[0]), linearToGamma(pixelColor[1]), linearToGamma(pixelColor[2]) });
 
                 // No antialiasing
                 // ---------------
