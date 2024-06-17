@@ -16,11 +16,28 @@ const Hittable = union(enum) {
         normal: vec.Direction,
         t: f32,
         frontFace: bool,
+        material: Material,
     };
 
     pub fn ray_hit(self: Hittable, ray: Ray, interval: Interval) ?Hit {
         switch (self) {
             inline else => |s| return s.ray_hit(ray, interval),
+        }
+    }
+};
+
+const Material = union(enum) {
+    lambertian: Lambertian,
+    metal: Metal,
+
+    const Scatter = struct {
+        attenuation: vec.Color,
+        ray: Ray,
+    };
+
+    pub fn scatter(self: Material, inputRay: Ray, rayHit: Hittable.Hit) ?Scatter {
+        switch (self) {
+            inline else => |s| return s.scatter(inputRay, rayHit),
         }
     }
 };
@@ -60,24 +77,24 @@ const Ray = struct {
     //
     /// Called when we have determined that the ray has hit something. This
     /// takes care of calculating face orientation.
-    pub fn hit(self: Ray, t: f32, targetOrigin: vec.Position) Hittable.Hit {
+    pub fn hit(self: Ray, t: f32, targetOrigin: vec.Position, targetMaterial: Material) Hittable.Hit {
         const intersectionPoint = self.at(t);
 
         // This calculation always produces an outwards normal
         const normal = vec.normalize(intersectionPoint - targetOrigin);
-        return hit_with_normal(self, t, intersectionPoint, normal);
+        return hit_with_normal(self, t, intersectionPoint, normal, targetMaterial);
     }
 
     /// Produces a hit and calculates the face orientation. The normal parameter MUST be normalized.
-    pub fn hit_with_normal(self: Ray, t: f32, intersectionPoint: vec.Position, normal: vec.Direction) Hittable.Hit {
+    pub fn hit_with_normal(self: Ray, t: f32, intersectionPoint: vec.Position, normal: vec.Direction, targetMaterial: Material) Hittable.Hit {
         std.debug.assert(@abs(vec.magnitude(normal) - 1.0) <= 0.1);
 
         if (vec.dot(self.direction, normal) > 0.0) {
             // The ray comes from inside the target so flip the normal and mark this as a back face
-            return Hittable.Hit{ .normal = -normal, .point = intersectionPoint, .t = t, .frontFace = false };
+            return Hittable.Hit{ .normal = -normal, .point = intersectionPoint, .t = t, .frontFace = false, .material = targetMaterial };
         } else {
             // The ray comes from outside the target so keep the normal and mark this as a front face
-            return Hittable.Hit{ .normal = normal, .point = intersectionPoint, .t = t, .frontFace = true };
+            return Hittable.Hit{ .normal = normal, .point = intersectionPoint, .t = t, .frontFace = true, .material = targetMaterial };
         }
     }
 };
@@ -85,6 +102,7 @@ const Ray = struct {
 const Sphere = struct {
     origin: vec.Position,
     radius: f32,
+    material: Material,
 
     // A sphere equation is x^2 + y^2 + z^2 = r^2.
     // If it is centered at C this becomes (Cx - x)^2 + (Cy - y)^2 + (Cz - z)^2 = r^2
@@ -132,7 +150,59 @@ const Sphere = struct {
 
         const p = ray.at(t);
         const outwardNormal = vec.scale(p - self.origin, 1.0 / self.radius);
-        return ray.hit_with_normal(t, p, outwardNormal);
+        return ray.hit_with_normal(t, p, outwardNormal, self.material);
+    }
+};
+
+// Always scatter Lambertian reflectance
+const Lambertian = struct {
+    rng: std.Random.Random,
+    albedo: vec.Color,
+
+    // The way we reflect rays is by creating a random unit vector and
+    // adding it to the normal. This essentially means that we are
+    // picking a point on the unit sphere that is tangent to the hit
+    // point. By doing so we are approximating Lambertian reflectance.
+    pub fn scatter(self: Lambertian, inputRay: Ray, rayHit: Hittable.Hit) ?Material.Scatter {
+        _ = inputRay;
+
+        var scatterDirection = rayHit.normal + vec.random_on_unit_sphere(self.rng);
+
+        // There is a possibility that we generate a random vector that when
+        // added to the normal produces a near zero result which is problematic
+        // for calculations down the line so guard that.
+        if (vec.near_zero(scatterDirection)) {
+            scatterDirection = rayHit.normal;
+        }
+
+        const scatteredRay = Ray{ .origin = rayHit.point, .direction = scatterDirection };
+        return Material.Scatter{
+            .attenuation = self.albedo,
+            .ray = scatteredRay,
+        };
+    }
+};
+
+const Metal = struct {
+    rng: std.Random.Random,
+    albedo: vec.Color,
+    fuzz: f32,
+
+    pub fn scatter(self: Metal, inputRay: Ray, rayHit: Hittable.Hit) ?Material.Scatter {
+        var reflectionDirection = vec.reflect(inputRay.direction, rayHit.normal);
+
+        // Add some fuzz to the metal to produce less crisp reflections.
+        reflectionDirection = vec.normalize(reflectionDirection) + vec.scale(vec.random_on_unit_sphere(self.rng), self.fuzz);
+
+        const scatteredRay = Ray{ .origin = rayHit.point, .direction = reflectionDirection };
+        if (vec.dot(reflectionDirection, rayHit.normal) > 0.0) {
+            return Material.Scatter{
+                .ray = scatteredRay,
+                .attenuation = self.albedo,
+            };
+        } else {
+            return null;
+        }
     }
 };
 
@@ -270,14 +340,12 @@ const Camera = struct {
 
         const maybeHit = ray.resolveHit(hittables);
         if (maybeHit) |hit| {
-            // The way we reflect rays is by creating a random unit vector and
-            // adding it to the normal. This essentially means that we are
-            // picking a point on the unit sphere that is tangent to the hit
-            // point. By doing so we are approximating Lambertian reflectance.
-            const reflectionDir = hit.normal + vec.random_on_unit_sphere(self.rng);
-            const reflectedRay = Ray{ .origin = hit.point, .direction = reflectionDir };
-            const reflectedColor = self.rayColor(depth + 1, reflectedRay, hittables);
-            return vec.scale(reflectedColor, 0.5);
+            const maybeScatter = hit.material.scatter(ray, hit);
+            if (maybeScatter) |scatter| {
+                return scatter.attenuation * self.rayColor(depth + 1, scatter.ray, hittables);
+            } else {
+                return @splat(0.0);
+            }
         }
 
         const unitDirection = vec.normalize(ray.direction);
@@ -312,12 +380,22 @@ pub fn main() !void {
     const seed: u64 = @intCast(std.time.milliTimestamp());
     std.log.info("seed: {}", .{seed});
     var prng = std.Random.DefaultPrng.init(seed);
-    const camera = Camera.init(.{ .rng = prng.random(), .imageWidthPixels = 860 });
+    const rng = prng.random();
+
+    const camera = Camera.init(.{ .rng = rng, .imageWidthPixels = 860 });
     var ppm_image = PpmImage.init(camera.imageWidthPixels, camera.imageHeightPixels);
 
+    const groundMaterial = Material{ .lambertian = Lambertian{ .albedo = vec.Color{ 0.8, 0.8, 0.0 }, .rng = rng } };
+    const centerMaterial = Material{ .lambertian = Lambertian{ .albedo = vec.Color{ 0.1, 0.2, 0.5 }, .rng = rng } };
+    const leftMaterial = Material{ .metal = Metal{ .albedo = vec.Color{ 0.8, 0.8, 0.8 }, .fuzz = 0.3, .rng = rng } };
+    const rightMaterial = Material{ .metal = Metal{ .albedo = vec.Color{ 0.8, 0.6, 0.2 }, .fuzz = 1.0, .rng = rng } };
+
     var hittables = std.ArrayList(Hittable).init(arena.allocator());
-    try hittables.append(Hittable{ .sphere = Sphere{ .origin = vec.Position{ 0.0, -100.5, -1.0 }, .radius = 100.0 } });
-    try hittables.append(Hittable{ .sphere = Sphere{ .origin = vec.Position{ 0.0, 0.0, -1.0 }, .radius = 0.5 } });
+
+    try hittables.append(Hittable{ .sphere = Sphere{ .origin = vec.Position{ 0.0, -100.5, -1.0 }, .radius = 100.0, .material = groundMaterial } });
+    try hittables.append(Hittable{ .sphere = Sphere{ .origin = vec.Position{ 0.0, 0.0, -1.2 }, .radius = 0.5, .material = centerMaterial } });
+    try hittables.append(Hittable{ .sphere = Sphere{ .origin = vec.Position{ -1.0, 0.0, -1.0 }, .radius = 0.5, .material = leftMaterial } });
+    try hittables.append(Hittable{ .sphere = Sphere{ .origin = vec.Position{ 1.0, 0.0, -1.0 }, .radius = 0.5, .material = rightMaterial } });
 
     var framebuffer = std.ArrayList(vec.Color).init(arena.allocator());
 

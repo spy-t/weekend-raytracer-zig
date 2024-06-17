@@ -76,6 +76,15 @@ pub fn random_on_hemisphere(rng: std.Random.Random, normal: Direction) @Vector(3
     }
 }
 
+pub fn near_zero(vec: @Vector(3, f32)) bool {
+    const e: @Vector(3, f32) = @splat(1e-8);
+    return @reduce(.And, @abs(vec) < e);
+}
+
+pub fn reflect(a: @Vector(3, f32), b: @Vector(3, f32)) @Vector(3, f32) {
+    return a - scale(b, 2 * dot(a, b));
+}
+
 test "vector scale works" {
     const v = Position{ -2.0, 4.0, -4.0 };
     const res = scale(v, 2.0);
