@@ -7,6 +7,8 @@ pub const vec = @import("vector.zig");
 const PpmImage = @import("ppm.zig").PpmImage;
 const Interval = @import("interval.zig").Interval;
 
+pub const log_level: std.log.Level = .info;
+
 // This is an enum of all the possible geometry that can be hit by rays. It reports on whether a ray hit the geometry.
 const Hittable = union(enum) {
     sphere: Sphere,
