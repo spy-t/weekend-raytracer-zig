@@ -260,12 +260,11 @@ const Camera = struct {
 
         const maybeHit = ray.resolveHit(hittables);
         if (maybeHit) |hit| {
-            // The way we reflect rays is by creating a random ray on the unit
-            // sphere. Afterwards we check if the new rays direction is on the
-            // same hemisphere as the normal at the reflection point. If it is
-            // great thats the reflection direction. If it is not we simply
-            // invert it so it ends up in the correct hemisphere.
-            const reflectionDir = vec.random_on_hemisphere(self.rng, hit.normal);
+            // The way we reflect rays is by creating a random unit vector and
+            // adding it to the normal. This essentially means that we are
+            // picking a point on the unit sphere that is tangent to the hit
+            // point. By doing so we are approximating Lambertian reflectance.
+            const reflectionDir = hit.normal + vec.random_on_unit_sphere(self.rng);
             const reflectedRay = Ray{ .origin = hit.point, .direction = reflectionDir };
             const reflectedColor = self.rayColor(depth + 1, reflectedRay, hittables);
             return vec.scale(reflectedColor, 0.5);
