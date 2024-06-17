@@ -39,7 +39,9 @@ const Ray = struct {
         var closestSoFar = std.math.inf(f32);
         var maybeHit: ?Hittable.Hit = null;
         for (hittables) |hittable| {
-            if (hittable.ray_hit(self, Interval.of(0.0, closestSoFar))) |h| {
+            // Ignore hits that are too close to the intersection point as it
+            // might produce inaccurate results due to floating point error
+            if (hittable.ray_hit(self, Interval.of(0.001, closestSoFar))) |h| {
                 maybeHit = h;
                 closestSoFar = h.t;
             }
@@ -139,6 +141,7 @@ const Sphere = struct {
 // name is kinda incorrect because it does not concern itself just with camera
 // stuff)
 const Camera = struct {
+    const reflectionMaxDepth = 10;
     rng: std.Random.Random,
 
     origin: vec.Position,
@@ -235,7 +238,7 @@ const Camera = struct {
                 var sample: u32 = 0;
                 while (sample < self.samplesPerPixel) : (sample += 1) {
                     const r = self.getRandomRayAt(w, h);
-                    pixelColor += self.rayColor(r, hittables);
+                    pixelColor += self.rayColor(0, r, hittables);
                 }
                 try framebuffer.append(vec.scale(pixelColor, self.pixelSamplesScale));
 
@@ -250,7 +253,11 @@ const Camera = struct {
         }
     }
 
-    fn rayColor(self: Camera, ray: Ray, hittables: []Hittable) vec.Color {
+    fn rayColor(self: Camera, depth: u32, ray: Ray, hittables: []Hittable) vec.Color {
+        if (depth >= reflectionMaxDepth) {
+            return @splat(0.0);
+        }
+
         const maybeHit = ray.resolveHit(hittables);
         if (maybeHit) |hit| {
             // The way we reflect rays is by creating a random ray on the unit
@@ -260,7 +267,7 @@ const Camera = struct {
             // invert it so it ends up in the correct hemisphere.
             const reflectionDir = vec.random_on_hemisphere(self.rng, hit.normal);
             const reflectedRay = Ray{ .origin = hit.point, .direction = reflectionDir };
-            const reflectedColor = self.rayColor(reflectedRay, hittables);
+            const reflectedColor = self.rayColor(depth + 1, reflectedRay, hittables);
             return vec.scale(reflectedColor, 0.5);
         }
 
