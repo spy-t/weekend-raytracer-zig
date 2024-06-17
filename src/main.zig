@@ -5,6 +5,7 @@
 const std = @import("std");
 pub const vec = @import("vector.zig");
 const PpmImage = @import("ppm.zig").PpmImage;
+const Interval = @import("interval.zig").Interval;
 
 const Hittable = union(enum) {
     sphere: Sphere,
@@ -139,38 +140,9 @@ const Sphere = struct {
     }
 };
 
-const Interval = struct {
-    min: f32,
-    max: f32,
-
-    pub const EMPTY = Interval{
-        .min = std.math.inf(f32),
-        .max = -std.math.inf(f32),
-    };
-
-    pub const UNIVERSE = Interval{
-        .min = -std.math.inf(f32),
-        .max = std.math.inf(f32),
-    };
-
-    pub fn of(min: f32, max: f32) Interval {
-        return .{ .min = min, .max = max };
-    }
-
-    pub fn size(self: Interval) f32 {
-        self.max - self.min;
-    }
-
-    pub fn contains(self: Interval, x: f32) bool {
-        return self.min <= x and x <= self.max;
-    }
-
-    pub fn surrounds(self: Interval, x: f32) bool {
-        return self.min < x and x < self.max;
-    }
-};
-
 const Camera = struct {
+    rng: std.Random.Random,
+
     origin: vec.Position,
     focalLength: f32,
 
@@ -189,11 +161,16 @@ const Camera = struct {
     pixelDeltaDown: vec.Direction,
     firstPixelPosition: vec.Position,
 
+    samplesPerPixel: u32,
+    pixelSamplesScale: f32,
+
     const Options = struct {
         aspectRatio: f32 = 16.0 / 9.0,
         focalLength: f32 = 1.0,
         viewportHeight: f32 = 2.0,
         imageWidthPixels: u32,
+        samplesPerPixel: u32 = 10,
+        rng: std.Random.Random,
     };
 
     pub fn init(options: Options) Camera {
@@ -228,6 +205,7 @@ const Camera = struct {
         const firstPixelPosition = viewportUpperLeft + vec.scale(pixelDeltaRight + pixelDeltaDown, 0.5);
 
         return Camera{
+            .rng = options.rng,
             .origin = origin,
             .focalLength = focalLength,
             .aspectRatio = aspectRatio,
@@ -241,21 +219,52 @@ const Camera = struct {
             .pixelDeltaDown = pixelDeltaDown,
             .viewportUpperLeft = viewportUpperLeft,
             .firstPixelPosition = firstPixelPosition,
+            .samplesPerPixel = options.samplesPerPixel,
+            .pixelSamplesScale = 1.0 / @as(f32, @floatFromInt(options.samplesPerPixel)),
         };
     }
 
     pub fn render(self: Camera, hittables: []Hittable, framebuffer: *std.ArrayList(vec.Color)) !void {
-        for (0..self.imageHeightPixels) |h| {
-            for (0..self.imageWidthPixels) |w| {
-                const wf = @as(f32, @floatFromInt(w));
-                const hf = @as(f32, @floatFromInt(h));
+        var h: u32 = 0;
+        while (h < self.imageHeightPixels) : (h += 1) {
+            var w: u32 = 0;
+            while (w < self.imageWidthPixels) : (w += 1) {
 
-                const pixelCenter = self.firstPixelPosition + vec.scale(self.pixelDeltaRight, wf) + vec.scale(self.pixelDeltaDown, hf);
-                const ray = Ray{ .direction = pixelCenter - self.origin, .origin = self.origin };
+                // Simple supersampling anti-aliasing. This blows up rendering
+                // times. It works by sampling some random pixels around the
+                // current pixel and blending (adding) their colors
+                var pixelColor: vec.Color = @splat(0.0);
+                var sample: u32 = 0;
+                while (sample < self.samplesPerPixel) : (sample += 1) {
+                    const r = self.getRandomRayAt(w, h);
+                    pixelColor += r.color(hittables);
+                }
+                try framebuffer.append(vec.scale(pixelColor, self.pixelSamplesScale));
 
-                try framebuffer.append(ray.color(hittables));
+                // No antialiasing
+                // ---------------
+                // const wf = @as(f32, @floatFromInt(w));
+                // const hf = @as(f32, @floatFromInt(h));
+                // const pixelCenter = self.firstPixelPosition + vec.scale(self.pixelDeltaRight, wf) + vec.scale(self.pixelDeltaDown, hf);
+                // const ray = Ray{ .direction = pixelCenter - self.origin, .origin = self.origin };
+                // try framebuffer.append(ray.color(hittables));
             }
         }
+    }
+
+    fn getRandomRayAt(self: Camera, i: u32, j: u32) Ray {
+        const offset = self.sampleSquare();
+        const fi: f32 = @floatFromInt(i);
+        const fj: f32 = @floatFromInt(j);
+        const pixelSample = self.firstPixelPosition + vec.scale(self.pixelDeltaRight, fi + offset[0]) + vec.scale(self.pixelDeltaDown, fj + offset[1]);
+        return Ray{ .direction = pixelSample - self.origin, .origin = self.origin };
+    }
+
+    fn sampleSquare(self: Camera) vec.Position {
+        const randX = self.rng.float(f32) - 0.5;
+        const randY = self.rng.float(f32) - 0.5;
+
+        return vec.Position{ randX - 0.5, randY - 0.5, 0.0 };
     }
 };
 
@@ -263,9 +272,10 @@ pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    const camera = Camera.init(.{
-        .imageWidthPixels = 860,
-    });
+    const seed: u64 = @intCast(std.time.milliTimestamp());
+    std.log.info("seed: {}", .{seed});
+    var prng = std.Random.DefaultPrng.init(seed);
+    const camera = Camera.init(.{ .rng = prng.random(), .imageWidthPixels = 860 });
     var ppm_image = PpmImage.init(camera.imageWidthPixels, camera.imageHeightPixels);
 
     var hittables = std.ArrayList(Hittable).init(arena.allocator());

@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Color = @import("vector.zig").Color;
+const Interval = @import("interval.zig").Interval;
 
 pub const PpmImage = struct {
     width: u32,
@@ -34,17 +35,22 @@ pub const PpmImage = struct {
     }
 
     pub fn writeTo(self: PpmImage, writer: anytype, data: []Color) !void {
+        std.debug.assert(data.len == self.width * self.height);
+
         var bf = std.io.bufferedWriter(writer);
         const bfw = bf.writer();
 
         // First write the header
         try std.fmt.format(bfw, "P3\n{} {}\n255\n", .{ self.width, self.height });
 
+        const intensity = Interval{ .min = 0.0, .max = 0.999 };
         for (data) |color| {
-            const r: u32 = @intFromFloat(255.999 * color[0]);
-            const g: u32 = @intFromFloat(255.999 * color[1]);
-            const b: u32 = @intFromFloat(255.999 * color[2]);
-            try std.fmt.format(bfw, " {} {} {}", .{ r, g, b });
+            const r: u32 = @intFromFloat(256.0 * intensity.clamp(color[0]));
+            const g: u32 = @intFromFloat(256.0 * intensity.clamp(color[1]));
+            const b: u32 = @intFromFloat(256.0 * intensity.clamp(color[2]));
+            try std.fmt.format(bfw, "{} {} {}\n", .{ r, g, b });
         }
+
+        try bf.flush();
     }
 };
