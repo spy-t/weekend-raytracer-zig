@@ -1,4 +1,5 @@
 const std = @import("std");
+const rand = @import("random.zig");
 
 pub const X = 0;
 pub const Y = 1;
@@ -38,6 +39,41 @@ pub fn equal(a: @Vector(3, f32), b: @Vector(3, f32)) bool {
 pub fn lerp(start: @Vector(3, f32), end: @Vector(3, f32), a: f32) @Vector(3, f32) {
     std.debug.assert(a >= 0 and a <= 1);
     return scale(start, 1.0 - a) + scale(end, a);
+}
+
+pub fn random(rng: std.Random.Random) @Vector(3, f32) {
+    return @Vector(3, f32){
+        rng.float(f32),
+        rng.float(f32),
+        rng.float(f32),
+    };
+}
+
+pub fn random_in(rng: std.Random.Random, min: f32, max: f32) @Vector(3, f32) {
+    return @Vector(3, f32){
+        rand.random_in(rng, min, max),
+        rand.random_in(rng, min, max),
+        rand.random_in(rng, min, max),
+    };
+}
+
+pub fn random_on_unit_sphere(rng: std.Random.Random) @Vector(3, f32) {
+    while (true) {
+        const v = random_in(rng, -1.0, 1.0);
+        const mag = magnitude(v);
+        if (mag * mag <= 1) {
+            return normalize(v);
+        }
+    }
+}
+
+pub fn random_on_hemisphere(rng: std.Random.Random, normal: Direction) @Vector(3, f32) {
+    const v = random_on_unit_sphere(rng);
+    if (dot(v, normal) > 0.0) {
+        return v;
+    } else {
+        return -v;
+    }
 }
 
 test "vector scale works" {

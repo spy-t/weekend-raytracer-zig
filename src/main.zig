@@ -7,6 +7,7 @@ pub const vec = @import("vector.zig");
 const PpmImage = @import("ppm.zig").PpmImage;
 const Interval = @import("interval.zig").Interval;
 
+// This is an enum of all the possible geometry that can be hit by rays. It reports on whether a ray hit the geometry.
 const Hittable = union(enum) {
     sphere: Sphere,
 
@@ -24,6 +25,8 @@ const Hittable = union(enum) {
     }
 };
 
+// The ray struct is responsible for casting rays and producing hits if a
+// hittable object is hit by a ray.
 const Ray = struct {
     origin: vec.Position,
     direction: vec.Direction,
@@ -32,10 +35,7 @@ const Ray = struct {
         return self.origin + vec.scale(self.direction, t);
     }
 
-    pub fn color(
-        self: Ray,
-        hittables: []Hittable,
-    ) vec.Color {
+    pub fn resolveHit(self: Ray, hittables: []Hittable) ?Hittable.Hit {
         var closestSoFar = std.math.inf(f32);
         var maybeHit: ?Hittable.Hit = null;
         for (hittables) |hittable| {
@@ -46,16 +46,10 @@ const Ray = struct {
         }
 
         if (maybeHit) |h| {
-            return vec.scale(h.normal + @as(vec.Color, @splat(1.0)), 0.5);
+            return h;
         }
 
-        const unitDirection = vec.normalize(self.direction);
-        // the unit vector produced here will have components in range [-1, 1].
-        // We want components to be in [0, 1] so we:
-        // - +1 it so the range becomes [0, 2]
-        // - /2 it so the range becomes [0, 1]
-        const a = 0.5 * (unitDirection[vec.Y] + 1.0);
-        return vec.lerp(vec.Color{ 1.0, 1.0, 1.0 }, vec.Color{ 0.5, 0.7, 1.0 }, a);
+        return null;
     }
 
     // Here we make an important choice. We calculate the orientation of a face
@@ -140,6 +134,10 @@ const Sphere = struct {
     }
 };
 
+// The camera struct is responsible for casting rays, coloring said rays based
+// on whether they hit something and performing pre and post processing. (The
+// name is kinda incorrect because it does not concern itself just with camera
+// stuff)
 const Camera = struct {
     rng: std.Random.Random,
 
@@ -237,7 +235,7 @@ const Camera = struct {
                 var sample: u32 = 0;
                 while (sample < self.samplesPerPixel) : (sample += 1) {
                     const r = self.getRandomRayAt(w, h);
-                    pixelColor += r.color(hittables);
+                    pixelColor += self.rayColor(r, hittables);
                 }
                 try framebuffer.append(vec.scale(pixelColor, self.pixelSamplesScale));
 
@@ -250,6 +248,29 @@ const Camera = struct {
                 // try framebuffer.append(ray.color(hittables));
             }
         }
+    }
+
+    fn rayColor(self: Camera, ray: Ray, hittables: []Hittable) vec.Color {
+        const maybeHit = ray.resolveHit(hittables);
+        if (maybeHit) |hit| {
+            // The way we reflect rays is by creating a random ray on the unit
+            // sphere. Afterwards we check if the new rays direction is on the
+            // same hemisphere as the normal at the reflection point. If it is
+            // great thats the reflection direction. If it is not we simply
+            // invert it so it ends up in the correct hemisphere.
+            const reflectionDir = vec.random_on_hemisphere(self.rng, hit.normal);
+            const reflectedRay = Ray{ .origin = hit.point, .direction = reflectionDir };
+            const reflectedColor = self.rayColor(reflectedRay, hittables);
+            return vec.scale(reflectedColor, 0.5);
+        }
+
+        const unitDirection = vec.normalize(ray.direction);
+        // the unit vector produced here will have components in range [-1, 1].
+        // We want components to be in [0, 1] so we:
+        // - +1 it so the range becomes [0, 2]
+        // - /2 it so the range becomes [0, 1]
+        const a = 0.5 * (unitDirection[vec.Y] + 1.0);
+        return vec.lerp(vec.Color{ 1.0, 1.0, 1.0 }, vec.Color{ 0.5, 0.7, 1.0 }, a);
     }
 
     fn getRandomRayAt(self: Camera, i: u32, j: u32) Ray {
