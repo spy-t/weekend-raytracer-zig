@@ -5,12 +5,13 @@ pub fn build(b: *std.Build) void {
 
     const optimize = b.standardOptimizeOption(.{});
 
-    const exe = b.addExecutable(.{
+    const exe_options = .{
         .name = "raytracer",
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
-    });
+    };
+    const exe = b.addExecutable(exe_options);
 
     b.installArtifact(exe);
 
@@ -38,4 +39,8 @@ pub fn build(b: *std.Build) void {
     // running the unit tests.
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_exe_unit_tests.step);
+
+    const exe_check = b.addExecutable(exe_options);
+    const check = b.step("check", "Check if raytracer compiles");
+    check.dependOn(&exe_check.step);
 }
